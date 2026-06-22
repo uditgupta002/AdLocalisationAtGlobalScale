@@ -195,7 +195,7 @@ class AudioSubagent(BaseAgent):
             script = json.dumps({
                 "market": self.market,
                 "strategy": "voiceover-translation",
-                "target_lang": market_profile["elevenlabs_lang"]
+                "target_lang": market_profile["gemini_lang"]
             })
             
             security_pass = await self.scan_script_opsera(script, "audio-strategy")
@@ -206,8 +206,8 @@ class AudioSubagent(BaseAgent):
             self.log(f"Downloading master audio from fork bucket: '{self.fork_bucket}'")
             input_bytes = download_asset(self.fork_bucket, self.source_key)
             
-            # 3. Simulate translation dubbing via ElevenLabs
-            self.log("Executing speech translation pipeline (mock ElevenLabs)")
+            # 3. Translate + Synthesize audio via Google Gemini S2ST pipeline
+            self.log("Executing Gemini 2-step S2ST pipeline (Transcribe+Translate → TTS synthesis)")
             await asyncio.sleep(1.0)
             
             # Fetch campaign ID dynamically from database to support campaign-specific audio narration
@@ -217,7 +217,7 @@ class AudioSubagent(BaseAgent):
             
             output_bytes = apply_audio_dubbing_mock(
                 input_bytes, 
-                market_profile["elevenlabs_lang"], 
+                market_profile["gemini_lang"], 
                 campaign_id
             )
             

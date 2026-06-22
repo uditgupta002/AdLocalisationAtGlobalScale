@@ -7,6 +7,7 @@ class Settings(BaseSettings):
     # MVP Mode toggle
     MOCK_SERVICES: bool = True
     TIGRIS_LIVE_MODE: bool = False
+    GEMINI_LIVE_MODE: bool = False
 
     # Webhook Server
     WEBHOOK_PORT: int = 3001
@@ -30,7 +31,7 @@ class Settings(BaseSettings):
     TIGRIS_OUTPUT_BUCKET: str = "mcdonalds-localized-output"
 
     # Production APIs
-    ELEVENLABS_API_KEY: str = "sk_mockelevenlabs"
+    GEMINI_API_KEY: str = "your_gemini_api_key"
     RUNWAYML_API_KEY: str = "rw_mockrunway"
     SHOTSTACK_API_KEY: str = "ss_mockshotstack"
     SHOTSTACK_ENV: str = "v1"
@@ -49,6 +50,8 @@ class Settings(BaseSettings):
             return [m.strip().lower() for m in value.split(",") if m.strip()]
         return value
 
+
+
 # Global settings instance
 settings = Settings()
 
@@ -59,7 +62,8 @@ MARKET_CONFIGS = {
         "name": "Japan",
         "language_code": "ja",
         "country_code": "JP",
-        "elevenlabs_lang": "ja",
+        "gemini_lang": "ja",
+        "gemini_voice_name": "Aoede",  # bright, expressive, female
         "font_family": "Noto Sans JP",
         "translations": {
             "I'm lovin' it": "私はうさぎが大好きだ",
@@ -77,7 +81,8 @@ MARKET_CONFIGS = {
         "name": "Germany",
         "language_code": "de",
         "country_code": "DE",
-        "elevenlabs_lang": "de",
+        "gemini_lang": "de",
+        "gemini_voice_name": "Charon",  # warm, deep, male
         "font_family": "Inter",
         "translations": {
             "I'm lovin' it": "Ich liebe Hasen",
@@ -94,7 +99,8 @@ MARKET_CONFIGS = {
         "name": "India",
         "language_code": "hi",
         "country_code": "IN",
-        "elevenlabs_lang": "hi",
+        "gemini_lang": "hi",
+        "gemini_voice_name": "Kore",  # clear, professional, female
         "font_family": "Noto Sans Devanagari",
         "translations": {
             "I'm lovin' it": "मुझे यह बहुत पसंद है",
@@ -111,7 +117,8 @@ MARKET_CONFIGS = {
         "name": "English (UK/US)",
         "language_code": "en",
         "country_code": "US",
-        "elevenlabs_lang": "en",
+        "gemini_lang": "en",
+        "gemini_voice_name": "Puck",  # sleek, energetic, male
         "font_family": "Arial",
         "translations": {
             "I'm lovin' it": "Absolutely loving it",

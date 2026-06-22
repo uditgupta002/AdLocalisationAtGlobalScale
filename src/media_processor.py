@@ -1,6 +1,7 @@
 import os
 import subprocess
 import tempfile
+from src.config import settings
 from src.utils.logger import setup_logger
 
 logger = setup_logger("swarm-media")
@@ -91,90 +92,140 @@ def apply_video_transformation(
 
 def apply_audio_dubbing_mock(audio_data: bytes, target_language: str, campaign_id: str = "gtv_ad") -> bytes:
     """
-    Mock audio dubbing. In production, this calls ElevenLabs.
-    For the local MVP, we use the macOS native 'say' command to speak in the target language!
-    This enables full offline localized audio demos at the hackathon.
+    Audio dubbing using Google Gemini 2-step S2ST pipeline:
+
+    Step 1 — Transcribe + Translate (gemini-2.5-flash):
+        Input audio → transcribed + translated text in target language.
+
+    Step 2 — Text-to-Speech (gemini-2.5-flash-preview-tts):
+        Translated text → synthesized audio in target language voice.
+
+    This preserves tone and style through the translation prompt instructions,
+    and produces high-quality native-language speech output.
     """
-    logger.info(f"Simulating ElevenLabs dubbing voiceover for language: '{target_language}' (Campaign: '{campaign_id}')")
-    
-    # Translate the marketing script to Japanese, German, Hindi, and English
-    # Supports both the default forest campaign (gtv_ad) and the viral Kokila Ben campaign (kokila_ad)!
-    campaign_scripts = {
-        "gtv_ad": {
-            "ja": "フォレストキャンペーンへようこそ。今日、ふわふわのビッグ・バック・バニーを見つけてみてください。彼はとてもフレンドリーで、新鮮なニンジンが大好きで、エネルギーに満ちています。私はうさぎが大好きだ！",
-            "de": "Willkommen zur Waldkampagne. Versuchen Sie heute, das flauschige Big Buck Bunny zu finden. Es ist extrem freundlich, liebt frische Karotten und ist voller Energie. Ich liebe Hasen!",
-            "hi": "जंगल अभियान में आपका स्वागत है। आज प्यारे, बिग बक बनी को खोजने की कोशिश करें। वह बहुत अनुकूल है, उसे ताज़ी गाजर पसंद है, और वह ऊर्जा से भरपूर है। मुझे यह बहुत पसंद है!",
-            "en": "Welcome to the forest campaign. Try to find the fluffy, big buck bunny today. He is extremely friendly, loves fresh carrots, and is loaded with energy. Absolutely loving it!"
-        },
-        "kokila_ad": {
-            "ja": "ラソデには誰がいましたか？私でしたか？あなたでしたか？誰ですか？炊飯器から豆を抜いたのは誰ですか？答えなさい！",
-            "de": "Wer war in der Küche? War ich es? Warst du es? Wer war es? Wer hat die Kichererbsen aus dem Schnellkochtopf genommen? Antworte mir!",
-            "hi": "रसोड़े में कौन था? मैं थी? तुम थी? कौन था? प्रेशर कुकर में से चने किसने निकाल दिए और खाली कुकर गैस पर चढ़ा दिया? बताओ!",
-            "en": "Who was in the kitchen? Was it me? Was it you? Who was it? Who removed the chickpeas from the pressure cooker and put the empty cooker on the stove? Tell me!"
-        }
-    }
-    
-    scripts = campaign_scripts.get(campaign_id.lower(), campaign_scripts["gtv_ad"])
-    translated_text = scripts.get(target_language.lower(), scripts["en"])
+    from src.config import MARKET_CONFIGS
+    voice_name = "Aoede"  # Default
+    target_lang_name = "Japanese"  # Default
+
+    # Map target language to Gemini prebuilt voice and language profile
+    for market_id, profile in MARKET_CONFIGS.items():
+        if profile.get("language_code") == target_language.lower() or profile.get("gemini_lang") == target_language.lower():
+            voice_name = profile.get("gemini_voice_name", voice_name)
+            target_lang_name = profile.get("name", target_lang_name)
+            break
+
+    from google import genai
+    from google.genai import types
+    import tempfile
+    import subprocess
+    import os
+
+    # Check if Gemini key is set
+    if not settings.GEMINI_API_KEY or settings.GEMINI_API_KEY == "your_gemini_api_key":
+        raise ValueError(
+            "GEMINI_API_KEY is not configured in your .env file! "
+            "Please create a key in Google AI Studio and save it as GEMINI_API_KEY to run live S2ST translation."
+        )
+
+    client = genai.Client(api_key=settings.GEMINI_API_KEY)
+
+    # ── STEP 1: Transcribe + Translate audio → text ─────────────────────────
+    logger.info(f"[S2ST Step 1] Transcribing and translating audio to {target_lang_name} using gemini-2.5-flash...")
+
+    audio_part = types.Part.from_bytes(
+        data=audio_data,
+        mime_type="audio/wav"
+    )
+
+    transcribe_prompt = (
+        f"Listen carefully to the spoken audio and translate the speech into natural, fluent {target_lang_name}.\n"
+        f"Instructions:\n"
+        f"- Output ONLY the translated {target_lang_name} text. No explanations, no English text, no markdown.\n"
+        f"- Preserve the speaker's tone: energetic, promotional, enthusiastic.\n"
+        f"- Keep the same pacing and rhythm as the original when spoken aloud.\n"
+        f"- Use natural, colloquial {target_lang_name} that sounds like native advertising voiceover."
+    )
+
+    transcribe_response = client.models.generate_content(
+        model="gemini-2.5-flash",
+        contents=[transcribe_prompt, audio_part],
+    )
+
+    translated_text = transcribe_response.text.strip()
     if not translated_text:
-        # Fallback to standard pass-through if unknown language
-        return audio_data
-        
-    # 2. Try to run macOS 'say' command
+        raise ValueError(
+            f"Gemini transcription/translation returned empty text for {target_lang_name}. "
+            "Check that the audio file contains clear speech."
+        )
+    logger.info(f"[S2ST Step 1] ✓ Translated text ({target_lang_name}): {translated_text[:120]}...")
+
+    # ── STEP 2: TTS — Synthesize translated text into speech ────────────────
+    logger.info(f"[S2ST Step 2] Synthesizing {target_lang_name} speech using gemini-2.5-flash-preview-tts (Voice: {voice_name})...")
+
+    tts_prompt = (
+        f"Read the following {target_lang_name} text aloud as a professional advertising voiceover.\n"
+        f"Use an energetic, enthusiastic, warm tone. Sound like a native {target_lang_name} speaker.\n\n"
+        f"{translated_text}"
+    )
+
+    tts_config = types.GenerateContentConfig(
+        response_modalities=["AUDIO"],
+        speech_config=types.SpeechConfig(
+            voice_config=types.VoiceConfig(
+                prebuilt_voice_config=types.PrebuiltVoiceConfig(
+                    voice_name=voice_name
+                )
+            )
+        ),
+    )
+
+    tts_response = client.models.generate_content(
+        model="gemini-2.5-flash-preview-tts",
+        contents=tts_prompt,
+        config=tts_config,
+    )
+
+    # Extract the generated audio bytes from the TTS response
+    generated_audio_bytes = None
+    if tts_response.candidates:
+        for candidate in tts_response.candidates:
+            if candidate.content and candidate.content.parts:
+                for part in candidate.content.parts:
+                    if part.inline_data and part.inline_data.data:
+                        generated_audio_bytes = part.inline_data.data
+                        break
+                if generated_audio_bytes:
+                    break
+
+    if not generated_audio_bytes:
+        raise ValueError(
+            f"Gemini TTS returned no audio data for {target_lang_name}. "
+            "Verify your API Key supports gemini-2.5-flash-preview-tts and check billing."
+        )
+
+    # Convert returned audio (PCM/L16 24kHz mono) → standard 44.1kHz stereo WAV via FFmpeg
     with tempfile.TemporaryDirectory() as tmpdir:
-        aiff_path = os.path.join(tmpdir, "dubbed.aiff")
-        wav_path = os.path.join(tmpdir, "dubbed.wav")
-        
-        # Determine language voice parameters if possible
-        # macOS has standard voices: ja -> Kyoko, de -> Anna, hi -> Lekha, en -> Samantha
-        cmd_say = ["say", "-o", aiff_path, translated_text]
-        
-        if target_language.lower() == "ja":
-            try:
-                # Test if native Kyoko voice is preloaded
-                subprocess.run(["say", "-v", "Kyoko", "テスト"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
-                cmd_say = ["say", "-v", "Kyoko", "-o", aiff_path, translated_text]
-            except (subprocess.CalledProcessError, FileNotFoundError):
-                logger.warning("Kyoko voice is not downloaded on this macOS host. Falling back to default system voice.")
-        elif target_language.lower() == "de":
-            try:
-                # Test if native Anna voice is preloaded
-                subprocess.run(["say", "-v", "Anna", "test"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
-                cmd_say = ["say", "-v", "Anna", "-o", aiff_path, translated_text]
-            except (subprocess.CalledProcessError, FileNotFoundError):
-                logger.warning("Anna voice is not downloaded on this macOS host. Falling back to default system voice.")
-        elif target_language.lower() == "hi":
-            try:
-                # Test if native Lekha voice is preloaded
-                subprocess.run(["say", "-v", "Lekha", "नमस्ते"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
-                cmd_say = ["say", "-v", "Lekha", "-o", aiff_path, translated_text]
-            except (subprocess.CalledProcessError, FileNotFoundError):
-                logger.warning("Lekha voice is not downloaded on this macOS host. Falling back to default system voice.")
-        elif target_language.lower() == "en":
-            try:
-                # Test if native Samantha voice is preloaded
-                subprocess.run(["say", "-v", "Samantha", "test"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
-                cmd_say = ["say", "-v", "Samantha", "-o", aiff_path, translated_text]
-            except (subprocess.CalledProcessError, FileNotFoundError):
-                logger.warning("Samantha voice is not downloaded on this macOS host. Falling back to default system voice.")
-        
-        try:
-            logger.info(f"Executing local voice synthesizer for '{target_language}': {translated_text}")
-            subprocess.run(cmd_say, check=True)
-            
-            # Convert AIFF output to standard WAV
-            subprocess.run([
-                "ffmpeg", "-y", "-i", aiff_path,
-                "-acodec", "pcm_s16le", "-ar", "44100", "-ac", "2",
-                wav_path
-            ], check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-            
-            with open(wav_path, "rb") as f:
-                return f.read()
-                
-        except Exception as e:
-            logger.warning(f"Local speech synthesis failed or unsupported on this host OS: {e}. Falling back to original pass-through audio.")
-            return audio_data
+        # TTS returns raw PCM audio (little-endian 16-bit, 24kHz, mono)
+        raw_path = os.path.join(tmpdir, "gemini_tts.pcm")
+        wav_path = os.path.join(tmpdir, "gemini_tts.wav")
+
+        with open(raw_path, "wb") as f:
+            f.write(generated_audio_bytes)
+
+        logger.info("Transcoding Gemini TTS PCM stream → standard 44.1kHz stereo WAV via FFmpeg...")
+        subprocess.run([
+            "ffmpeg", "-y",
+            "-f", "s16le",       # signed 16-bit little-endian PCM
+            "-ar", "24000",      # Gemini TTS outputs at 24kHz
+            "-ac", "1",          # mono
+            "-i", raw_path,
+            "-acodec", "pcm_s16le", "-ar", "44100", "-ac", "2",
+            wav_path
+        ], check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+
+        with open(wav_path, "rb") as f:
+            logger.info(f"✓ Google Gemini S2ST pipeline completed for {target_lang_name}!")
+            return f.read()
 
 
 def merge_video_audio(video_data: bytes, audio_data: bytes) -> bytes:

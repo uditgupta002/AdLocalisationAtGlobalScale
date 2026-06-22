@@ -142,18 +142,21 @@ def create_bucket_fork(source_bucket: str, fork_name: str) -> None:
     logger.debug(f"Local storage folder fork emulated at: {fork_dir}")
 
     if settings.TIGRIS_LIVE_MODE:
-        s3 = get_s3_client()
-        # Intercept the CreateBucket S3 call to inject Tigris' custom Zero-Copy Bucket Fork header
-        def add_fork_headers(request, **kwargs):
-            request.headers["X-Tigris-Fork-Source-Bucket"] = source_bucket
-            
-        s3.meta.events.register("before-send.s3.CreateBucket", add_fork_headers)
         try:
-            s3.create_bucket(Bucket=fork_name)
-            logger.info(f"Successfully created zero-copy Tigris bucket fork '{fork_name}' from '{source_bucket}'")
-        finally:
-            # Deregister to keep the events channel clean
-            s3.meta.events.unregister("before-send.s3.CreateBucket", add_fork_headers)
+            s3 = get_s3_client()
+            # Intercept the CreateBucket S3 call to inject Tigris' custom Zero-Copy Bucket Fork header
+            def add_fork_headers(request, **kwargs):
+                request.headers["X-Tigris-Fork-Source-Bucket"] = source_bucket
+                
+            s3.meta.events.register("before-send.s3.CreateBucket", add_fork_headers)
+            try:
+                s3.create_bucket(Bucket=fork_name)
+                logger.info(f"Successfully created zero-copy Tigris bucket fork '{fork_name}' from '{source_bucket}'")
+            finally:
+                # Deregister to keep the events channel clean
+                s3.meta.events.unregister("before-send.s3.CreateBucket", add_fork_headers)
+        except Exception as e:
+            logger.warning(f"Tigris live fork creation failed for '{fork_name}': {e}. Proceeding with local-only fork.")
 
 
 def delete_bucket_fork(fork_name: str) -> None:
