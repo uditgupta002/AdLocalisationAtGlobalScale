@@ -103,7 +103,14 @@ class Orchestrator:
             # 5. Remix & Assemble final localized ads
             database.update_job_status(job_id, "assembling")
             
-            for market in markets:
+            # Only assemble markets where BOTH video and audio succeeded
+            successful_markets = [m for m in markets if m in video_results and m in audio_results]
+            skipped_markets = [m for m in markets if m not in successful_markets]
+
+            if skipped_markets:
+                database.add_job_log(job_id, f"⚠️ Skipping assembly for failed markets: {skipped_markets}")
+
+            for market in successful_markets:
                 database.add_job_log(job_id, f"Assembling assets for market '{market.upper()}'")
                 
                 # Fetch video out key from video forks
@@ -154,7 +161,10 @@ class Orchestrator:
             
             # 7. Job Success
             database.update_job_status(job_id, "completed")
-            database.add_job_log(job_id, "🎉 GLOBAL AD LOCALIZATION SUCCESSFUL! All targets rendered and live on CDN.")
+            if skipped_markets:
+                database.add_job_log(job_id, f"✅ LOCALIZATION COMPLETE — {len(successful_markets)} market(s) rendered: {[m.upper() for m in successful_markets]}. Skipped: {[m.upper() for m in skipped_markets]}.")
+            else:
+                database.add_job_log(job_id, "🎉 GLOBAL AD LOCALIZATION SUCCESSFUL! All targets rendered and live on CDN.")
             logger.info(f"Job {job_id} successfully completed!")
             
         except Exception as e:

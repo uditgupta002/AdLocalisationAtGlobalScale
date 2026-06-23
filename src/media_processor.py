@@ -92,16 +92,22 @@ def apply_video_transformation(
 
 def apply_audio_dubbing_mock(audio_data: bytes, target_language: str, campaign_id: str = "gtv_ad") -> bytes:
     """
-    Audio dubbing using Google Gemini 2-step S2ST pipeline:
+    Audio dubbing using Google Gemini 4-step S2ST pipeline with music preservation:
+
+    Step 0 — Stem Separation (Facebook Demucs):
+        Original audio → vocals.wav + no_vocals.wav (background music/sfx)
 
     Step 1 — Transcribe + Translate (gemini-2.5-flash):
-        Input audio → transcribed + translated text in target language.
+        Isolated vocals → translated text in target language.
 
     Step 2 — Text-to-Speech (gemini-2.5-flash-preview-tts):
-        Translated text → synthesized audio in target language voice.
+        Translated text → synthesized speech in target language voice.
 
-    This preserves tone and style through the translation prompt instructions,
-    and produces high-quality native-language speech output.
+    Step 3 — Re-mix (FFmpeg):
+        Translated speech + original background music → final dubbed audio.
+
+    The background music, dramatic score, and SFX from the original are preserved
+    and blended behind the new localized voiceover.
     """
     from src.config import MARKET_CONFIGS
     voice_name = "Aoede"  # Default
@@ -118,6 +124,7 @@ def apply_audio_dubbing_mock(audio_data: bytes, target_language: str, campaign_i
     from google.genai import types
     import tempfile
     import subprocess
+    import sys
     import os
 
     # Check if Gemini key is set
@@ -129,101 +136,196 @@ def apply_audio_dubbing_mock(audio_data: bytes, target_language: str, campaign_i
 
     client = genai.Client(api_key=settings.GEMINI_API_KEY)
 
-    # ── STEP 1: Transcribe + Translate audio → text ─────────────────────────
-    logger.info(f"[S2ST Step 1] Transcribing and translating audio to {target_lang_name} using gemini-2.5-flash...")
-
-    audio_part = types.Part.from_bytes(
-        data=audio_data,
-        mime_type="audio/wav"
-    )
-
-    transcribe_prompt = (
-        f"Listen carefully to the spoken audio and translate the speech into natural, fluent {target_lang_name}.\n"
-        f"Instructions:\n"
-        f"- Output ONLY the translated {target_lang_name} text. No explanations, no English text, no markdown.\n"
-        f"- Preserve the speaker's tone: energetic, promotional, enthusiastic.\n"
-        f"- Keep the same pacing and rhythm as the original when spoken aloud.\n"
-        f"- Use natural, colloquial {target_lang_name} that sounds like native advertising voiceover."
-    )
-
-    transcribe_response = client.models.generate_content(
-        model="gemini-2.5-flash",
-        contents=[transcribe_prompt, audio_part],
-    )
-
-    translated_text = transcribe_response.text.strip()
-    if not translated_text:
-        raise ValueError(
-            f"Gemini transcription/translation returned empty text for {target_lang_name}. "
-            "Check that the audio file contains clear speech."
-        )
-    logger.info(f"[S2ST Step 1] ✓ Translated text ({target_lang_name}): {translated_text[:120]}...")
-
-    # ── STEP 2: TTS — Synthesize translated text into speech ────────────────
-    logger.info(f"[S2ST Step 2] Synthesizing {target_lang_name} speech using gemini-2.5-flash-preview-tts (Voice: {voice_name})...")
-
-    tts_prompt = (
-        f"Read the following {target_lang_name} text aloud as a professional advertising voiceover.\n"
-        f"Use an energetic, enthusiastic, warm tone. Sound like a native {target_lang_name} speaker.\n\n"
-        f"{translated_text}"
-    )
-
-    tts_config = types.GenerateContentConfig(
-        response_modalities=["AUDIO"],
-        speech_config=types.SpeechConfig(
-            voice_config=types.VoiceConfig(
-                prebuilt_voice_config=types.PrebuiltVoiceConfig(
-                    voice_name=voice_name
-                )
-            )
-        ),
-    )
-
-    tts_response = client.models.generate_content(
-        model="gemini-2.5-flash-preview-tts",
-        contents=tts_prompt,
-        config=tts_config,
-    )
-
-    # Extract the generated audio bytes from the TTS response
-    generated_audio_bytes = None
-    if tts_response.candidates:
-        for candidate in tts_response.candidates:
-            if candidate.content and candidate.content.parts:
-                for part in candidate.content.parts:
-                    if part.inline_data and part.inline_data.data:
-                        generated_audio_bytes = part.inline_data.data
-                        break
-                if generated_audio_bytes:
-                    break
-
-    if not generated_audio_bytes:
-        raise ValueError(
-            f"Gemini TTS returned no audio data for {target_lang_name}. "
-            "Verify your API Key supports gemini-2.5-flash-preview-tts and check billing."
-        )
-
-    # Convert returned audio (PCM/L16 24kHz mono) → standard 44.1kHz stereo WAV via FFmpeg
     with tempfile.TemporaryDirectory() as tmpdir:
-        # TTS returns raw PCM audio (little-endian 16-bit, 24kHz, mono)
+        # Write original audio to disk for processing
+        original_wav = os.path.join(tmpdir, "original.wav")
+        with open(original_wav, "wb") as f:
+            f.write(audio_data)
+
+        # ── STEP 0: Stem Separation — split vocals from background music ────
+        logger.info("[S2ST Step 0] Running Facebook Demucs stem separation (vocals + background music)...")
+
+        vocals_path = None
+        music_path = None
+        demucs_out = os.path.join(tmpdir, "demucs_stems")
+
+        try:
+            # Use demucs with --two-stems=vocals to get vocals + no_vocals
+            # --flac avoids the torchcodec/torchaudio WAV-writer dependency on Python 3.14+
+            result = subprocess.run(
+                [
+                    sys.executable, "-m", "demucs",
+                    "--two-stems", "vocals",
+                    "--flac",                   # output as FLAC (FFmpeg-compatible, no torchcodec needed)
+                    "--out", demucs_out,
+                    original_wav,
+                ],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                timeout=300,  # 5 min timeout for model download + inference
+            )
+
+            if result.returncode != 0:
+                stderr_msg = result.stderr.decode("utf-8", errors="replace")[-500:]
+                logger.warning(f"[S2ST Step 0] Demucs exited with code {result.returncode}: {stderr_msg}")
+            else:
+                # Use glob to find stems anywhere under demucs_out
+                # (works regardless of model name: htdemucs, mdx_extra, mdx, etc.)
+                import glob
+                # Match both .flac (preferred) and .wav (fallback)
+                vocals_matches = (
+                    glob.glob(os.path.join(demucs_out, "**", "vocals.flac"), recursive=True) or
+                    glob.glob(os.path.join(demucs_out, "**", "vocals.wav"),  recursive=True)
+                )
+                music_matches = (
+                    glob.glob(os.path.join(demucs_out, "**", "no_vocals.flac"), recursive=True) or
+                    glob.glob(os.path.join(demucs_out, "**", "no_vocals.wav"),  recursive=True)
+                )
+
+                if vocals_matches and music_matches:
+                    vocals_path = vocals_matches[0]
+                    music_path  = music_matches[0]
+                    logger.info(
+                        f"[S2ST Step 0] ✓ Stems separated — "
+                        f"vocals={os.path.getsize(vocals_path):,}B  "
+                        f"music={os.path.getsize(music_path):,}B"
+                    )
+                else:
+                    all_found = glob.glob(os.path.join(demucs_out, "**", "*"), recursive=True)
+                    logger.warning(
+                        f"[S2ST Step 0] Demucs ran OK but stems not found. "
+                        f"Files under output dir: {all_found[:10]}"
+                    )
+
+        except Exception as e:
+            logger.warning(f"[S2ST Step 0] Demucs stem separation failed: {e}. Proceeding with full audio (no music separation).")
+
+        # If demucs failed, fall back to the original audio for translation
+        vocals_for_translation = vocals_path if vocals_path else original_wav
+
+        # ── STEP 1: Transcribe + Translate vocals → translated text ─────────
+        logger.info(f"[S2ST Step 1] Transcribing and translating to {target_lang_name} using gemini-2.5-flash...")
+
+        with open(vocals_for_translation, "rb") as f:
+            vocals_bytes = f.read()
+
+        audio_part = types.Part.from_bytes(data=vocals_bytes, mime_type="audio/wav")
+
+        transcribe_prompt = (
+            f"Listen carefully to the spoken audio and translate the speech into natural, fluent {target_lang_name}.\n"
+            f"Instructions:\n"
+            f"- Output ONLY the translated {target_lang_name} text. No explanations, no English text, no markdown.\n"
+            f"- Preserve the speaker's tone: energetic, promotional, enthusiastic.\n"
+            f"- Keep the same pacing and rhythm as the original when spoken aloud.\n"
+            f"- Use natural, colloquial {target_lang_name} that sounds like native advertising voiceover."
+        )
+
+        transcribe_response = client.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=[transcribe_prompt, audio_part],
+        )
+
+        translated_text = transcribe_response.text.strip()
+        if not translated_text:
+            raise ValueError(
+                f"Gemini transcription/translation returned empty text for {target_lang_name}. "
+                "Check that the audio file contains clear speech."
+            )
+        logger.info(f"[S2ST Step 1] ✓ Translated text ({target_lang_name}): {translated_text[:120]}...")
+
+        # ── STEP 2: TTS — Synthesize translated text into speech ─────────────
+        logger.info(f"[S2ST Step 2] Synthesizing {target_lang_name} speech via gemini-2.5-flash-preview-tts (Voice: {voice_name})...")
+
+        tts_prompt = (
+            f"Read the following {target_lang_name} text aloud as a professional advertising voiceover.\n"
+            f"Use an energetic, enthusiastic, warm tone. Sound like a native {target_lang_name} speaker.\n\n"
+            f"{translated_text}"
+        )
+
+        tts_config = types.GenerateContentConfig(
+            response_modalities=["AUDIO"],
+            speech_config=types.SpeechConfig(
+                voice_config=types.VoiceConfig(
+                    prebuilt_voice_config=types.PrebuiltVoiceConfig(
+                        voice_name=voice_name
+                    )
+                )
+            ),
+        )
+
+        tts_response = client.models.generate_content(
+            model="gemini-2.5-flash-preview-tts",
+            contents=tts_prompt,
+            config=tts_config,
+        )
+
+        # Extract the generated audio bytes from the TTS response
+        generated_audio_bytes = None
+        if tts_response.candidates:
+            for candidate in tts_response.candidates:
+                if candidate.content and candidate.content.parts:
+                    for part in candidate.content.parts:
+                        if part.inline_data and part.inline_data.data:
+                            generated_audio_bytes = part.inline_data.data
+                            break
+                    if generated_audio_bytes:
+                        break
+
+        if not generated_audio_bytes:
+            raise ValueError(
+                f"Gemini TTS returned no audio data for {target_lang_name}. "
+                "Verify your API Key supports gemini-2.5-flash-preview-tts and check billing."
+            )
+
+        # Decode PCM → WAV (Gemini TTS returns raw PCM: s16le, 24kHz, mono)
         raw_path = os.path.join(tmpdir, "gemini_tts.pcm")
-        wav_path = os.path.join(tmpdir, "gemini_tts.wav")
+        speech_wav = os.path.join(tmpdir, "speech.wav")
 
         with open(raw_path, "wb") as f:
             f.write(generated_audio_bytes)
 
-        logger.info("Transcoding Gemini TTS PCM stream → standard 44.1kHz stereo WAV via FFmpeg...")
+        logger.info("Transcoding Gemini TTS PCM → 44.1kHz stereo WAV via FFmpeg...")
         subprocess.run([
             "ffmpeg", "-y",
-            "-f", "s16le",       # signed 16-bit little-endian PCM
-            "-ar", "24000",      # Gemini TTS outputs at 24kHz
-            "-ac", "1",          # mono
+            "-f", "s16le",    # signed 16-bit little-endian PCM
+            "-ar", "24000",   # Gemini TTS native sample rate
+            "-ac", "1",       # mono
             "-i", raw_path,
             "-acodec", "pcm_s16le", "-ar", "44100", "-ac", "2",
-            wav_path
+            speech_wav,
         ], check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 
-        with open(wav_path, "rb") as f:
+        # ── STEP 3: Re-mix — translated speech + original background music ───
+        final_wav = os.path.join(tmpdir, "final_dubbed.wav")
+
+        if music_path and os.path.exists(music_path):
+            logger.info("[S2ST Step 3] Re-mixing translated speech with original background music...")
+
+            # Mix strategy:
+            #   - Speech (translated): 0 dB (full volume, foreground)
+            #   - Background music: -4 dB (slightly ducked so speech is intelligible)
+            # amix normalizes by default; use weights to duck music slightly
+            subprocess.run([
+                "ffmpeg", "-y",
+                "-i", speech_wav,       # input 0: translated speech
+                "-i", music_path,       # input 1: original background music
+                "-filter_complex",
+                # Normalize both to 44100 stereo, then mix with music ducked -4dB
+                "[0:a]aresample=44100,aformat=sample_fmts=s16:channel_layouts=stereo[speech];"
+                "[1:a]aresample=44100,aformat=sample_fmts=s16:channel_layouts=stereo,volume=0.63[music];"
+                "[speech][music]amix=inputs=2:duration=longest:dropout_transition=0[out]",
+                "-map", "[out]",
+                "-acodec", "pcm_s16le",
+                final_wav,
+            ], check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+
+            logger.info(f"✓ Google Gemini S2ST + Music Mix completed for {target_lang_name}!")
+        else:
+            # No music stem available — use speech-only output
+            logger.info("[S2ST Step 3] No background music stem available — using speech-only output.")
+            final_wav = speech_wav
+
+        with open(final_wav, "rb") as f:
             logger.info(f"✓ Google Gemini S2ST pipeline completed for {target_lang_name}!")
             return f.read()
 

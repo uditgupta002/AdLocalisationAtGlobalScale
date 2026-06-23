@@ -72,7 +72,7 @@ def generate_offline_test_assets(campaign_id: str):
     offline using local FFmpeg, ensuring hackathon demos work 100% without internet.
     If assets already exist, skips generation to prevent overwriting custom uploads.
     """
-    storage_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "storage", "master")
+    storage_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "storage", settings.TIGRIS_MASTER_BUCKET)
     campaign_dir = os.path.join(storage_dir, f"campaigns/{campaign_id}")
     os.makedirs(os.path.join(campaign_dir, "video"), exist_ok=True)
     os.makedirs(os.path.join(campaign_dir, "audio"), exist_ok=True)

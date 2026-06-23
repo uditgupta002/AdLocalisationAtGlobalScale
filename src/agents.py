@@ -161,14 +161,17 @@ class VideoParentAgent(BaseAgent):
         for market, result in zip(self.markets, results):
             if isinstance(result, Exception):
                 self.log(f"Child video agent for market '{market}' failed: {result}")
-                errors.append(result)
+                errors.append(market)
             else:
                 processed_maps[market] = result
-                
-        if errors:
+
+        if errors and not processed_maps:
             update_job_agent(self.job_id, self.agent_id, "failed")
-            raise RuntimeError("One or more child video subagents failed")
-            
+            raise RuntimeError(f"All video subagents failed: {errors}")
+
+        if errors:
+            self.log(f"⚠️ {len(errors)} market(s) skipped due to errors: {errors}. Continuing with {list(processed_maps.keys())}...")
+
         update_job_agent(self.job_id, self.agent_id, "completed")
         return processed_maps
 
@@ -261,13 +264,16 @@ class AudioParentAgent(BaseAgent):
         for market, result in zip(self.markets, results):
             if isinstance(result, Exception):
                 self.log(f"Child audio agent for market '{market}' failed: {result}")
-                errors.append(result)
+                errors.append(market)
             else:
                 processed_maps[market] = result
-                
-        if errors:
+
+        if errors and not processed_maps:
             update_job_agent(self.job_id, self.agent_id, "failed")
-            raise RuntimeError("One or more child audio subagents failed")
-            
+            raise RuntimeError(f"All audio subagents failed: {errors}")
+
+        if errors:
+            self.log(f"⚠️ {len(errors)} market(s) skipped due to errors: {errors}. Continuing with {list(processed_maps.keys())}...")
+
         update_job_agent(self.job_id, self.agent_id, "completed")
         return processed_maps
