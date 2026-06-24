@@ -1,4 +1,4 @@
-# Canva Content Swarm — Global Ad Localization Pipeline
+# OmniSwarm — Global Ad Localization Pipeline
 
 A master American ad (video + audio) is uploaded to Tigris. Object notifications trigger an AI agent swarm that localizes the ad for Japan and Germany in parallel — adapting visuals, voiceover, and cultural context — with zero manual intervention.
 

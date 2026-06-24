@@ -1,9 +1,9 @@
 #!/bin/bash
 set -e
 
-# Canva Content Swarm Dev Server Launcher
+# OmniSwarm Dev Server Launcher
 echo "============================================="
-echo "🐝 Starting Canva Content Swarm Dev Servers 🐝"
+echo "🐝 Starting OmniSwarm Dev Servers 🐝"
 echo "============================================="
 
 # Ensure we are in virtual environment

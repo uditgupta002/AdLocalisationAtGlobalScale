@@ -3,7 +3,7 @@
 set -o errexit
 
 echo "============================================="
-echo "🐝 Building Canva Swarm Environment"
+echo "🐝 Building OmniSwarm Environment"
 echo "============================================="
 
 # 1. Install Python Dependencies

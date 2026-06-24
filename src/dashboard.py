@@ -11,7 +11,7 @@ from src.media_processor import is_ffmpeg_installed
 
 # Set page configurations
 st.set_page_config(
-    page_title="Canva Content Swarm Dashboard",
+    page_title="OmniSwarm Dashboard",
     page_icon="🐝",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -177,7 +177,7 @@ def trigger_swarm_pipeline(campaign_id: str):
 
 # --- UI LAYOUT ---
 
-st.sidebar.markdown("# 🐝 Canva Content Swarm")
+st.sidebar.markdown("# 🐝 OmniSwarm")
 st.sidebar.markdown("---")
 st.sidebar.markdown(f"**Mock Mode**: `{settings.MOCK_SERVICES}`")
 st.sidebar.markdown(f"**Target Markets**: `{', '.join(settings.TARGET_MARKETS)}`")

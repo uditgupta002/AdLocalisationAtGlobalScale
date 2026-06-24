@@ -10,7 +10,7 @@ from src.utils.idempotency import IdempotencyStore
 logger = setup_logger("swarm-webhook")
 idempotency = IdempotencyStore()
 
-app = FastAPI(title="Canva Content Swarm Webhook Server", version="1.0.0")
+app = FastAPI(title="OmniSwarm Webhook Server", version="1.0.0")
 security = HTTPBearer()
 
 # Pydantic schemas for Tigris Event Payload validation

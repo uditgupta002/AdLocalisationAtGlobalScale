@@ -1,6 +1,6 @@
 services:
   - type: web
-    name: canva-swarm-webhook
+    name: omniswarm-webhook
     env: python
     buildCommand: "./render-build.sh"
     startCommand: "export PATH=/opt/render/project/src/bin:$PATH && uvicorn src.webhook:app --host 0.0.0.0 --port $PORT"
@@ -22,7 +22,7 @@ services:
         sync: false
 
   - type: web
-    name: canva-swarm-dashboard
+    name: omniswarm-dashboard
     env: python
     buildCommand: "./render-build.sh"
     startCommand: "export PATH=/opt/render/project/src/bin:$PATH && streamlit run src/dashboard.py --server.port $PORT --server.address 0.0.0.0"
