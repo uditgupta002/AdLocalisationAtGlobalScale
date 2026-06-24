@@ -1,0 +1,42 @@
+services:
+  - type: web
+    name: canva-swarm-webhook
+    env: python
+    buildCommand: "./render-build.sh"
+    startCommand: "export PATH=/opt/render/project/src/bin:$PATH && uvicorn src.webhook:app --host 0.0.0.0 --port $PORT"
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.0
+      - key: PYTHONPATH
+        value: /opt/render/project/src
+      # The variables below should be set in the Render Dashboard securely
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: INSFORGE_BASE_URL
+        sync: false
+      - key: INSFORGE_API_KEY
+        sync: false
+      - key: TIGRIS_ACCESS_KEY_ID
+        sync: false
+      - key: TIGRIS_SECRET_ACCESS_KEY
+        sync: false
+
+  - type: web
+    name: canva-swarm-dashboard
+    env: python
+    buildCommand: "./render-build.sh"
+    startCommand: "export PATH=/opt/render/project/src/bin:$PATH && streamlit run src/dashboard.py --server.port $PORT --server.address 0.0.0.0"
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.0
+      - key: PYTHONPATH
+        value: /opt/render/project/src
+      # Sync same variables for the dashboard
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: INSFORGE_BASE_URL
+        sync: false
+      - key: INSFORGE_API_KEY
+        sync: false
+      - key: TARGET_MARKETS
+        value: "japan,germany,india"

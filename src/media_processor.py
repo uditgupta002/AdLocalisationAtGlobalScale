@@ -26,6 +26,44 @@ def is_ffmpeg_installed() -> bool:
     except FileNotFoundError:
         return False
 
+def is_drawtext_supported() -> bool:
+    if not is_ffmpeg_installed():
+        return False
+    try:
+        res = subprocess.run(["ffmpeg", "-filters"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        return "drawtext" in res.stdout
+    except Exception:
+        return False
+
+import struct
+
+def pcm_to_wav(pcm_data: bytes, sample_rate: int = 24000, num_channels: int = 1, bits_per_sample: int = 16) -> bytes:
+    """
+    Constructs a valid 44-byte RIFF/WAV header for raw PCM audio data in pure Python.
+    """
+    subchunk2_size = len(pcm_data)
+    chunk_size = 36 + subchunk2_size
+    byte_rate = sample_rate * num_channels * bits_per_sample // 8
+    block_align = num_channels * bits_per_sample // 8
+    
+    header = struct.pack(
+        '<4sI4s4sIHHIIHH4sI',
+        b'RIFF',
+        chunk_size,
+        b'WAVE',
+        b'fmt ',
+        16,                # Subchunk1Size (16 for PCM)
+        1,                 # AudioFormat (1 = PCM)
+        num_channels,
+        sample_rate,
+        byte_rate,
+        block_align,
+        bits_per_sample,
+        b'data',
+        subchunk2_size
+    )
+    return header + pcm_data
+
 def apply_video_transformation(
     video_data: bytes,
     text_overlay: str,
@@ -64,11 +102,14 @@ def apply_video_transformation(
             
         # Drawtext filter
         if text_overlay:
-            text_overlay_escaped = text_overlay.replace("'", "'\\''").replace(":", "\\:")
-            drawtext_str = f"drawtext=text='{text_overlay_escaped}':x=(w-text_w)/2:y=h-80:fontsize=28:fontcolor={font_color}:box=1:boxcolor={bg_color}@0.8:boxborderw=10"
-            if font_path:
-                drawtext_str += f":fontfile='{font_path}'"
-            vf_filters.append(drawtext_str)
+            if is_drawtext_supported():
+                text_overlay_escaped = text_overlay.replace("'", "'\\''").replace(":", "\\:")
+                drawtext_str = f"drawtext=text='{text_overlay_escaped}':x=(w-text_w)/2:y=h-80:fontsize=28:fontcolor={font_color}:box=1:boxcolor={bg_color}@0.8:boxborderw=10"
+                if font_path:
+                    drawtext_str += f":fontfile='{font_path}'"
+                vf_filters.append(drawtext_str)
+            else:
+                logger.warning("FFmpeg installed but does NOT support the 'drawtext' filter (requires libfreetype). Skipping text overlay.")
             
         vf_arg = ",".join(vf_filters) if vf_filters else "copy"
         
@@ -93,22 +134,11 @@ def apply_video_transformation(
 def apply_audio_dubbing_mock(audio_data: bytes, target_language: str, campaign_id: str = "gtv_ad") -> bytes:
     """
     Audio dubbing using Google Gemini 4-step S2ST pipeline with music preservation:
-
-    Step 0 — Stem Separation (Facebook Demucs):
-        Original audio → vocals.wav + no_vocals.wav (background music/sfx)
-
-    Step 1 — Transcribe + Translate (gemini-2.5-flash):
-        Isolated vocals → translated text in target language.
-
-    Step 2 — Text-to-Speech (gemini-2.5-flash-preview-tts):
-        Translated text → synthesized speech in target language voice.
-
-    Step 3 — Re-mix (FFmpeg):
-        Translated speech + original background music → final dubbed audio.
-
-    The background music, dramatic score, and SFX from the original are preserved
-    and blended behind the new localized voiceover.
     """
+    if not settings.GEMINI_LIVE_MODE:
+        logger.info(f"[S2ST] Mock Mode Enabled (GEMINI_LIVE_MODE=False). Returning mock audio track for language '{target_language}'.")
+        return audio_data
+
     from src.config import MARKET_CONFIGS
     voice_name = "Aoede"  # Default
     target_lang_name = "Japanese"  # Default
@@ -284,45 +314,69 @@ def apply_audio_dubbing_mock(audio_data: bytes, target_language: str, campaign_i
         with open(raw_path, "wb") as f:
             f.write(generated_audio_bytes)
 
-        logger.info("Transcoding Gemini TTS PCM → 44.1kHz stereo WAV via FFmpeg...")
-        subprocess.run([
-            "ffmpeg", "-y",
-            "-f", "s16le",    # signed 16-bit little-endian PCM
-            "-ar", "24000",   # Gemini TTS native sample rate
-            "-ac", "1",       # mono
-            "-i", raw_path,
-            "-acodec", "pcm_s16le", "-ar", "44100", "-ac", "2",
-            speech_wav,
-        ], check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        transcoded = False
+        if is_ffmpeg_installed():
+            logger.info("Transcoding Gemini TTS PCM → 44.1kHz stereo WAV via FFmpeg...")
+            try:
+                subprocess.run([
+                    "ffmpeg", "-y",
+                    "-f", "s16le",    # signed 16-bit little-endian PCM
+                    "-ar", "24000",   # Gemini TTS native sample rate
+                    "-ac", "1",       # mono
+                    "-i", raw_path,
+                    "-acodec", "pcm_s16le", "-ar", "44100", "-ac", "2",
+                    speech_wav,
+                ], check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                transcoded = True
+            except Exception as e:
+                logger.warning(f"FFmpeg transcoding failed: {e}. Falling back to pure Python PCM-to-WAV.")
+                transcoded = False
+
+        if not transcoded:
+            logger.info("Writing WAV header via pure Python fallback (no FFmpeg)...")
+            try:
+                wav_data = pcm_to_wav(generated_audio_bytes, sample_rate=24000, num_channels=1, bits_per_sample=16)
+                with open(speech_wav, "wb") as f:
+                    f.write(wav_data)
+            except Exception as e:
+                logger.error(f"Failed to write pure Python PCM-to-WAV fallback: {e}")
+                # As a last-ditch effort, just write PCM bytes directly to speech_wav
+                with open(speech_wav, "wb") as f:
+                    f.write(generated_audio_bytes)
 
         # ── STEP 3: Re-mix — translated speech + original background music ───
         final_wav = os.path.join(tmpdir, "final_dubbed.wav")
 
-        if music_path and os.path.exists(music_path):
+        mixed = False
+        if music_path and os.path.exists(music_path) and is_ffmpeg_installed():
             logger.info("[S2ST Step 3] Re-mixing translated speech with original background music...")
+            try:
+                # Mix strategy:
+                #   - Speech (translated): 0 dB (full volume, foreground)
+                #   - Background music: -4 dB (slightly ducked so speech is intelligible)
+                # amix normalizes by default; use weights to duck music slightly
+                subprocess.run([
+                    "ffmpeg", "-y",
+                    "-i", speech_wav,       # input 0: translated speech
+                    "-i", music_path,       # input 1: original background music
+                    "-filter_complex",
+                    # Normalize both to 44100 stereo, then mix with music ducked -4dB
+                    "[0:a]aresample=44100,aformat=sample_fmts=s16:channel_layouts=stereo[speech];"
+                    "[1:a]aresample=44100,aformat=sample_fmts=s16:channel_layouts=stereo,volume=0.63[music];"
+                    "[speech][music]amix=inputs=2:duration=longest:dropout_transition=0[out]",
+                    "-map", "[out]",
+                    "-acodec", "pcm_s16le",
+                    final_wav,
+                ], check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                mixed = True
+                logger.info(f"✓ Google Gemini S2ST + Music Mix completed for {target_lang_name}!")
+            except Exception as e:
+                logger.warning(f"[S2ST Step 3] FFmpeg remixing failed: {e}. Falling back to speech-only output.")
+                mixed = False
 
-            # Mix strategy:
-            #   - Speech (translated): 0 dB (full volume, foreground)
-            #   - Background music: -4 dB (slightly ducked so speech is intelligible)
-            # amix normalizes by default; use weights to duck music slightly
-            subprocess.run([
-                "ffmpeg", "-y",
-                "-i", speech_wav,       # input 0: translated speech
-                "-i", music_path,       # input 1: original background music
-                "-filter_complex",
-                # Normalize both to 44100 stereo, then mix with music ducked -4dB
-                "[0:a]aresample=44100,aformat=sample_fmts=s16:channel_layouts=stereo[speech];"
-                "[1:a]aresample=44100,aformat=sample_fmts=s16:channel_layouts=stereo,volume=0.63[music];"
-                "[speech][music]amix=inputs=2:duration=longest:dropout_transition=0[out]",
-                "-map", "[out]",
-                "-acodec", "pcm_s16le",
-                final_wav,
-            ], check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-
-            logger.info(f"✓ Google Gemini S2ST + Music Mix completed for {target_lang_name}!")
-        else:
-            # No music stem available — use speech-only output
-            logger.info("[S2ST Step 3] No background music stem available — using speech-only output.")
+        if not mixed:
+            # No music stem available or remix failed or FFmpeg missing — use speech-only output
+            logger.info("[S2ST Step 3] No background music stem or FFmpeg remix failed — using speech-only output.")
             final_wav = speech_wav
 
         with open(final_wav, "rb") as f:

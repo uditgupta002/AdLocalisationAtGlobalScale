@@ -36,6 +36,10 @@ class Settings(BaseSettings):
     SHOTSTACK_API_KEY: str = "ss_mockshotstack"
     SHOTSTACK_ENV: str = "v1"
 
+    # === InsForge ===
+    INSFORGE_BASE_URL: str = "https://uw5cafb3.us-east.insforge.app"
+    INSFORGE_API_KEY: str = ""
+
     # Pydantic Configuration
     model_config = SettingsConfigDict(
         env_file=os.path.join(os.path.dirname(os.path.dirname(__file__)), ".env"),
