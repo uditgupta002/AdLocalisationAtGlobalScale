@@ -2,6 +2,7 @@ services:
   - type: web
     name: omniswarm-webhook
     env: python
+    plan: free
     buildCommand: "./render-build.sh"
     startCommand: "export PATH=/opt/render/project/src/bin:$PATH && uvicorn src.webhook:app --host 0.0.0.0 --port $PORT"
     envVars:
@@ -24,6 +25,7 @@ services:
   - type: web
     name: omniswarm-dashboard
     env: python
+    plan: free
     buildCommand: "./render-build.sh"
     startCommand: "export PATH=/opt/render/project/src/bin:$PATH && streamlit run src/dashboard.py --server.port $PORT --server.address 0.0.0.0"
     envVars:
