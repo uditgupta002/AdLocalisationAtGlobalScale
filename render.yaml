@@ -27,7 +27,7 @@ services:
     env: python
     plan: free
     buildCommand: "./render-build.sh"
-    startCommand: "export PATH=/opt/render/project/src/bin:$PATH && streamlit run src/dashboard.py --server.port $PORT --server.address 0.0.0.0"
+    startCommand: "export PATH=/opt/render/project/src/bin:$PATH && streamlit run src/dashboard.py --server.port $PORT --server.address 0.0.0.0 --server.headless true --server.enableCORS false --server.enableXsrfProtection false"
     envVars:
       - key: PYTHON_VERSION
         value: 3.11.0
