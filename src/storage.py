@@ -57,6 +57,20 @@ def upload_asset(bucket: str, key: str, data: bytes, content_type: str = "applic
         )
         logger.info(f"Successfully uploaded asset to live Tigris bucket: s3://{bucket}/{key}")
 
+def get_presigned_url(bucket: str, key: str, expires_in: int = 3600) -> str:
+    if settings.TIGRIS_LIVE_MODE:
+        s3 = get_s3_client()
+        if s3:
+            try:
+                return s3.generate_presigned_url(
+                    'get_object',
+                    Params={'Bucket': bucket, 'Key': key},
+                    ExpiresIn=expires_in
+                )
+            except Exception as e:
+                logger.error(f"Failed to generate presigned URL: {e}")
+    return None
+
 
 def download_asset(bucket: str, key: str) -> bytes:
     """

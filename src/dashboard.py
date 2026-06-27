@@ -7,6 +7,7 @@ import streamlit as st
 from datetime import datetime
 from src.config import settings, get_market_config
 from src import database
+from src.storage import get_presigned_url
 from src.media_processor import is_ffmpeg_installed
 
 # Set page configurations
@@ -271,11 +272,17 @@ else:
                         job["source_bucket"],
                         job["video_key"]
                     )
-                    if os.path.exists(master_vid_path):
+                    
+                    presigned_url = get_presigned_url(job["source_bucket"], job["video_key"])
+                    
+                    if presigned_url:
+                        st.video(presigned_url)
+                        st.code(f"Live S3 Presigned URL (Valid 1hr):\n{presigned_url}", language="bash")
+                    elif os.path.exists(master_vid_path):
                         st.video(master_vid_path)
                         st.code(f"Original S3 Location: s3://{job['source_bucket']}/{job['video_key']}", language="bash")
                     else:
-                        st.warning(f"Original master file not found at: {master_vid_path}")
+                        st.warning(f"Original master file not found locally or in cloud.")
                 
                 # Localized Regional Tabs
                 for i, market in enumerate(job["markets"]):
@@ -292,12 +299,17 @@ else:
                             relative_vid_path = f"storage/{market_res['output_bucket']}/{market_res['merged_ad_key']}"
                             absolute_vid_path = os.path.join(os.path.dirname(output_dir), relative_vid_path)
                             
-                            if os.path.exists(absolute_vid_path):
+                            presigned_url = get_presigned_url(market_res['output_bucket'], market_res['merged_ad_key'])
+                            
+                            if presigned_url:
+                                st.video(presigned_url)
+                                st.code(f"Live S3 Presigned URL (Valid 1hr):\n{presigned_url}", language="bash")
+                            elif os.path.exists(absolute_vid_path):
                                 # Load and display video directly
                                 st.video(absolute_vid_path)
-                                st.code(f"CDN URL: https://cdn.tigris.dev/{market_res['output_bucket']}/{market_res['merged_ad_key']}", language="bash")
+                                st.code(f"Local Storage Path: {absolute_vid_path}", language="bash")
                             else:
-                                st.warning(f"Video file compiled but not found locally at: {absolute_vid_path}")
+                                st.warning(f"Video file compiled but not found locally or in cloud.")
                                 
                             # Display Cultural Rules applied
                             m_config = get_market_config(market)
