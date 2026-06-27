@@ -10,6 +10,10 @@ services:
         value: 3.11.0
       - key: PYTHONPATH
         value: /opt/render/project/src
+      - key: TIGRIS_LIVE_MODE
+        value: "True"
+      - key: GEMINI_LIVE_MODE
+        value: "True"
       # The variables below should be set in the Render Dashboard securely
       - key: GEMINI_API_KEY
         sync: false
@@ -33,12 +37,20 @@ services:
         value: 3.11.0
       - key: PYTHONPATH
         value: /opt/render/project/src
+      - key: TIGRIS_LIVE_MODE
+        value: "True"
+      - key: GEMINI_LIVE_MODE
+        value: "True"
       # Sync same variables for the dashboard
       - key: GEMINI_API_KEY
         sync: false
       - key: INSFORGE_BASE_URL
         sync: false
       - key: INSFORGE_API_KEY
+        sync: false
+      - key: TIGRIS_ACCESS_KEY_ID
+        sync: false
+      - key: TIGRIS_SECRET_ACCESS_KEY
         sync: false
       - key: TARGET_MARKETS
         value: "japan,germany,india"
