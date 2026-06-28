@@ -6,12 +6,13 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     # MVP Mode toggle
     MOCK_SERVICES: bool = True
-    TIGRIS_LIVE_MODE: bool = False
+    S3_LIVE_MODE: bool = False
     GEMINI_LIVE_MODE: bool = False
 
-    # Webhook Server
+    # Webhook / Worker Server
     WEBHOOK_PORT: int = 3001
     WEBHOOK_AUTH_TOKEN: str = "your-bearer-token"
+    WORKER_AUTH_TOKEN: str = "your-worker-token"
 
     # Dashboard
     DASHBOARD_PORT: int = 3002
@@ -23,22 +24,28 @@ class Settings(BaseSettings):
     LOG_LEVEL: str = "INFO"
     ENV_MODE: str = "development"
 
-    # Tigris Storage (S3-compatible)
-    TIGRIS_ACCESS_KEY_ID: str = "tid_mockaccesskey"
-    TIGRIS_SECRET_ACCESS_KEY: str = "tsec_mocksecretkey"
-    TIGRIS_ENDPOINT: str = "https://t3.storage.dev"
-    TIGRIS_MASTER_BUCKET: str = "mcdonalds-master-assets"
-    TIGRIS_OUTPUT_BUCKET: str = "mcdonalds-localized-output"
+    # === AWS credentials (shared by S3 + Aurora DSQL) ===
+    # boto3 also honors the standard AWS_* environment variables; these
+    # APP_AWS_* names mirror the Next.js app so one .env works for both.
+    APP_AWS_REGION: str = "us-east-1"
+    APP_AWS_ACCESS_KEY_ID: str = ""
+    APP_AWS_SECRET_ACCESS_KEY: str = ""
+
+    # === Amazon S3 object storage ===
+    S3_MASTER_BUCKET: str = "omniswarm-master-assets"
+    S3_OUTPUT_BUCKET: str = "omniswarm-localized-output"
+
+    # === Amazon Aurora DSQL ===
+    # When set, the worker persists job state to Aurora DSQL (PostgreSQL wire
+    # protocol with short-lived IAM tokens). When empty, it falls back to a
+    # local SQLite database for offline development.
+    DSQL_ENDPOINT: str = ""
 
     # Production APIs
     GEMINI_API_KEY: str = "your_gemini_api_key"
     RUNWAYML_API_KEY: str = "rw_mockrunway"
     SHOTSTACK_API_KEY: str = "ss_mockshotstack"
     SHOTSTACK_ENV: str = "v1"
-
-    # === InsForge ===
-    INSFORGE_BASE_URL: str = "https://uw5cafb3.us-east.insforge.app"
-    INSFORGE_API_KEY: str = ""
 
     # Pydantic Configuration
     model_config = SettingsConfigDict(

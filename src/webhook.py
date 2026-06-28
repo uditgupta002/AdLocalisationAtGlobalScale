@@ -42,9 +42,40 @@ def authenticate_webhook(credentials: HTTPAuthorizationCredentials = Depends(sec
         )
 
 
+def authenticate_worker(credentials: HTTPAuthorizationCredentials = Depends(security)):
+    """Validate the shared secret used by the Vercel app to trigger jobs."""
+    if credentials.credentials != settings.WORKER_AUTH_TOKEN:
+        logger.warning("Unauthorized worker trigger attempt")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid worker token"
+        )
+
+
+class WorkerRunRequest(BaseModel):
+    job_id: str
+
+
 @app.get("/health")
 def health_check():
     return {"status": "healthy"}
+
+
+@app.post("/worker/run")
+async def worker_run(
+    req: WorkerRunRequest,
+    authenticated: None = Depends(authenticate_worker),
+):
+    """
+    Trigger the localization pipeline for a job already persisted to Aurora DSQL
+    by the Vercel frontend. Runs in the background so the HTTP call returns fast.
+    """
+    from src.orchestrator import Orchestrator
+
+    logger.info(f"Worker run requested for job {req.job_id}")
+    orchestrator = Orchestrator()
+    asyncio.create_task(orchestrator.run_job(req.job_id))
+    return {"accepted": True, "job_id": req.job_id}
 
 
 @app.post("/webhook/tigris")

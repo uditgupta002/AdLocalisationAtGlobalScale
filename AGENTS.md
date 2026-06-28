@@ -1,22 +1,16 @@
 # AGENTS.md
 
-<!-- INSFORGE:START -->
-## InsForge backend
+## Stack
 
-This project uses [InsForge](https://insforge.dev): an all-in-one, open-source Postgres-based backend (BaaS) that gives this app a database, authentication, file storage, edge functions, realtime, an AI model gateway, and payments through one platform.
+OmniSwarm runs on an **AWS + Vercel** stack:
 
-- **Project:** **frontier** (API base `https://uw5cafb3.us-east.insforge.app`)
-- **Skills:** these InsForge skills are installed for supported coding agents. Reach for them before implementing any InsForge feature instead of guessing the API:
-  - `insforge`: app code with the `@insforge/sdk` client (database CRUD, auth, storage, edge functions, realtime, AI, email, and Stripe payments).
-  - `insforge-cli`: backend and infrastructure via the `insforge` CLI (projects, SQL, migrations, RLS policies, storage buckets, functions, secrets, payment setup, schedules, deploys).
-  - `insforge-debug`: diagnosing failures (SDK/HTTP errors, RLS denials, auth and OAuth issues) and running security or performance audits.
-  - `insforge-integrations`: wiring external auth providers (Clerk, Auth0, WorkOS, Better Auth, etc.) for JWT-based RLS, or the OKX x402 payment facilitator.
-  - `find-skills`: discovering additional skills on demand.
-- **Credentials:** app code reads keys from `.env.local`; the CLI reads `.insforge/project.json`. Never hardcode or commit keys.
+- **Frontend & API:** Next.js 14 (App Router, TypeScript, Tailwind) in `web/`, deployed on **Vercel**.
+- **Database:** **Amazon Aurora DSQL** (PostgreSQL-compatible, IAM-authenticated). Node access via `pg` + `@aws-sdk/dsql-signer` (`web/src/lib/db.ts`); Python access via `psycopg` + boto3 tokens (`src/database.py`). Schema in `web/db/schema.sql`.
+- **Object storage:** **Amazon S3** (master + localized-output buckets), browser access via presigned URLs (`web/src/lib/s3.ts`, `src/storage.py`).
+- **Worker:** Python FastAPI pipeline (FFmpeg + Demucs + Gemini) in `src/`, triggered via `POST /worker/run`.
 
-Key patterns:
+## Conventions
 
-- Database inserts take an array: `insert([{ ... }])`.
-- Reference users with `auth.users(id)`; use `auth.uid()` in RLS policies.
-- For storage uploads, persist both the returned `url` and `key`.
-<!-- INSFORGE:END -->
+- Credentials are read from `APP_AWS_*` env vars (not `AWS_*`, which Vercel/Lambda reserves). Never hardcode or commit keys.
+- The single source of truth for job state is the `localization_jobs` table in Aurora DSQL; both the Vercel app and the worker read/write it.
+- Nested fields (`markets`, `forks`, `agents`, `results`, `logs`) are stored as JSON text for parity between the Node and Python layers.

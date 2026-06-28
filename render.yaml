@@ -1,6 +1,9 @@
 services:
+  # OmniSwarm Python worker (FFmpeg + Demucs + Gemini pipeline).
+  # The Next.js frontend deploys separately on Vercel; this worker shares the
+  # same Aurora DSQL cluster and Amazon S3 buckets.
   - type: web
-    name: omniswarm-webhook
+    name: omniswarm-worker
     env: python
     plan: free
     buildCommand: "./render-build.sh"
@@ -10,47 +13,26 @@ services:
         value: 3.11.0
       - key: PYTHONPATH
         value: /opt/render/project/src
-      - key: TIGRIS_LIVE_MODE
+      - key: S3_LIVE_MODE
         value: "True"
       - key: GEMINI_LIVE_MODE
         value: "True"
-      # The variables below should be set in the Render Dashboard securely
-      - key: GEMINI_API_KEY
-        sync: false
-      - key: INSFORGE_BASE_URL
-        sync: false
-      - key: INSFORGE_API_KEY
-        sync: false
-      - key: TIGRIS_ACCESS_KEY_ID
-        sync: false
-      - key: TIGRIS_SECRET_ACCESS_KEY
-        sync: false
-
-  - type: web
-    name: omniswarm-dashboard
-    env: python
-    plan: free
-    buildCommand: "./render-build.sh"
-    startCommand: "export PATH=/opt/render/project/src/bin:$PATH && streamlit run src/dashboard.py --server.port $PORT --server.address 0.0.0.0 --server.headless true --server.enableCORS false --server.enableXsrfProtection false"
-    envVars:
-      - key: PYTHON_VERSION
-        value: 3.11.0
-      - key: PYTHONPATH
-        value: /opt/render/project/src
-      - key: TIGRIS_LIVE_MODE
-        value: "True"
-      - key: GEMINI_LIVE_MODE
-        value: "True"
-      # Sync same variables for the dashboard
-      - key: GEMINI_API_KEY
-        sync: false
-      - key: INSFORGE_BASE_URL
-        sync: false
-      - key: INSFORGE_API_KEY
-        sync: false
-      - key: TIGRIS_ACCESS_KEY_ID
-        sync: false
-      - key: TIGRIS_SECRET_ACCESS_KEY
-        sync: false
+      - key: APP_AWS_REGION
+        value: us-east-1
       - key: TARGET_MARKETS
-        value: "japan,germany,india"
+        value: "japan,germany,india,english"
+      # Set securely in the Render dashboard:
+      - key: APP_AWS_ACCESS_KEY_ID
+        sync: false
+      - key: APP_AWS_SECRET_ACCESS_KEY
+        sync: false
+      - key: DSQL_ENDPOINT
+        sync: false
+      - key: S3_MASTER_BUCKET
+        sync: false
+      - key: S3_OUTPUT_BUCKET
+        sync: false
+      - key: WORKER_AUTH_TOKEN
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
