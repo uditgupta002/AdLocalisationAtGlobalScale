@@ -6,6 +6,9 @@ from src.utils.logger import setup_logger
 
 logger = setup_logger("swarm-media")
 
+# Allow overriding the ffmpeg binary (e.g. when the default on PATH is broken).
+FFMPEG = os.environ.get("FFMPEG_BIN", "ffmpeg")
+
 # Helper to find standard macOS fonts
 def get_system_font_path() -> str:
     common_paths = [
@@ -21,7 +24,7 @@ def get_system_font_path() -> str:
 
 def is_ffmpeg_installed() -> bool:
     try:
-        subprocess.run(["ffmpeg", "-version"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        subprocess.run([FFMPEG, "-version"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         return True
     except FileNotFoundError:
         return False
@@ -30,7 +33,7 @@ def is_drawtext_supported() -> bool:
     if not is_ffmpeg_installed():
         return False
     try:
-        res = subprocess.run(["ffmpeg", "-filters"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        res = subprocess.run([FFMPEG, "-filters"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         return "drawtext" in res.stdout
     except Exception:
         return False
@@ -114,7 +117,7 @@ def apply_video_transformation(
         vf_arg = ",".join(vf_filters) if vf_filters else "copy"
         
         cmd = [
-            "ffmpeg", "-y", "-i", input_path,
+            FFMPEG, "-y", "-i", input_path,
             "-vf", vf_arg,
             "-c:a", "copy",
             output_path
@@ -319,7 +322,7 @@ def apply_audio_dubbing_mock(audio_data: bytes, target_language: str, campaign_i
             logger.info("Transcoding Gemini TTS PCM → 44.1kHz stereo WAV via FFmpeg...")
             try:
                 subprocess.run([
-                    "ffmpeg", "-y",
+                    FFMPEG, "-y",
                     "-f", "s16le",    # signed 16-bit little-endian PCM
                     "-ar", "24000",   # Gemini TTS native sample rate
                     "-ac", "1",       # mono
@@ -356,7 +359,7 @@ def apply_audio_dubbing_mock(audio_data: bytes, target_language: str, campaign_i
                 #   - Background music: -4 dB (slightly ducked so speech is intelligible)
                 # amix normalizes by default; use weights to duck music slightly
                 subprocess.run([
-                    "ffmpeg", "-y",
+                    FFMPEG, "-y",
                     "-i", speech_wav,       # input 0: translated speech
                     "-i", music_path,       # input 1: original background music
                     "-filter_complex",
@@ -405,7 +408,7 @@ def merge_video_audio(video_data: bytes, audio_data: bytes) -> bytes:
             
         # Re-mux: copy video stream, encode audio as aac
         cmd = [
-            "ffmpeg", "-y",
+            FFMPEG, "-y",
             "-i", video_path,
             "-i", audio_path,
             "-c:v", "copy",

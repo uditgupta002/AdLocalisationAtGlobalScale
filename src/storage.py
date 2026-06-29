@@ -92,6 +92,32 @@ def download_asset(bucket: str, key: str) -> bytes:
         return f.read()
 
 
+def object_exists(bucket: str, key: str) -> bool:
+    """Return True if an object exists in S3 (live) or the local mirror."""
+    if settings.S3_LIVE_MODE and _is_durable_bucket(bucket):
+        try:
+            get_s3_client().head_object(Bucket=bucket, Key=key)
+            return True
+        except Exception:
+            return False
+    return os.path.exists(os.path.join(LOCAL_STORAGE_DIR, bucket, key))
+
+
+def copy_object(bucket: str, src_key: str, dst_key: str) -> None:
+    """Server-side copy within a bucket (used to seed demo master assets)."""
+    if settings.S3_LIVE_MODE and _is_durable_bucket(bucket):
+        get_s3_client().copy_object(
+            Bucket=bucket,
+            CopySource={"Bucket": bucket, "Key": src_key},
+            Key=dst_key,
+        )
+        return
+    src = os.path.join(LOCAL_STORAGE_DIR, bucket, src_key)
+    dst = os.path.join(LOCAL_STORAGE_DIR, bucket, dst_key)
+    os.makedirs(os.path.dirname(dst), exist_ok=True)
+    shutil.copy2(src, dst)
+
+
 def list_assets(bucket: str, prefix: str = "") -> List[str]:
     logger.info(f"Listing assets in {bucket} prefix='{prefix}' (S3Live={settings.S3_LIVE_MODE})")
 

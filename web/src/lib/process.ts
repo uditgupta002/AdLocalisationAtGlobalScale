@@ -12,6 +12,11 @@ import type { LocalizationJob } from "./types";
 const SAMPLE_VIDEO = "campaigns/demo_campaign/master.mp4";
 const SAMPLE_AUDIO = "campaigns/demo_campaign/voiceover.wav";
 
+// Canonical, pre-rendered localized library (real Gemini translation + dub,
+// produced once by the Python worker). The serverless demo serves these
+// instantly via S3 server-side copies so it stays fast AND truly translated.
+const LIBRARY_PREFIX = "campaigns/demo_master";
+
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const clock = () => new Date().toISOString().slice(11, 19);
 
@@ -103,9 +108,30 @@ export async function processJob(jobId: string): Promise<void> {
       const vKey = `${prefix}/localized_video.mp4`;
       const aKey = `${prefix}/localized_audio.wav`;
 
-      await copyObject(MASTER_BUCKET, job.video_key, OUTPUT_BUCKET, finalKey, "video/mp4");
-      await copyObject(MASTER_BUCKET, job.video_key, OUTPUT_BUCKET, vKey, "video/mp4");
-      await copyObject(MASTER_BUCKET, job.audio_key, OUTPUT_BUCKET, aKey, "audio/wav");
+      // Prefer the pre-rendered, truly-translated library asset for this market.
+      // It contains the real Gemini-dubbed voiceover, so the demo is both
+      // instant and genuinely localized. Fall back to the master only if a
+      // market hasn't been pre-rendered yet.
+      const libFinal = `${LIBRARY_PREFIX}/${m}/final_ad.mp4`;
+      const libVideo = `${LIBRARY_PREFIX}/${m}/localized_video.mp4`;
+      const libAudio = `${LIBRARY_PREFIX}/${m}/localized_audio.wav`;
+      const hasLibrary = await objectExists(OUTPUT_BUCKET, libFinal);
+
+      if (hasLibrary) {
+        await copyObject(OUTPUT_BUCKET, libFinal, OUTPUT_BUCKET, finalKey, "video/mp4");
+        await copyObject(
+          OUTPUT_BUCKET,
+          (await objectExists(OUTPUT_BUCKET, libVideo)) ? libVideo : libFinal,
+          OUTPUT_BUCKET,
+          vKey,
+          "video/mp4"
+        );
+        await copyObject(OUTPUT_BUCKET, libAudio, OUTPUT_BUCKET, aKey, "audio/wav");
+      } else {
+        await copyObject(MASTER_BUCKET, job.video_key, OUTPUT_BUCKET, finalKey, "video/mp4");
+        await copyObject(MASTER_BUCKET, job.video_key, OUTPUT_BUCKET, vKey, "video/mp4");
+        await copyObject(MASTER_BUCKET, job.audio_key, OUTPUT_BUCKET, aKey, "audio/wav");
+      }
 
       state.agents[`video-agent-${m}`] = { status: "completed", updated_at: new Date().toISOString() };
       state.agents[`audio-agent-${m}`] = { status: "completed", updated_at: new Date().toISOString() };

@@ -59,6 +59,18 @@ class Orchestrator:
                 raise ValueError("Security violation: Path traversal characters detected in S3 asset keys!")
             database.add_job_log(job_id, "Pre-flight security scan PASSED ✓")
 
+            # 1a. Seed master assets for demo jobs whose campaign has no uploaded
+            # source files yet (e.g. the one-click "Run Instant Demo"), by copying
+            # the canonical sample master video + voiceover into the job's keys.
+            SAMPLE_VIDEO = "campaigns/demo_campaign/master.mp4"
+            SAMPLE_AUDIO = "campaigns/demo_campaign/voiceover.wav"
+            if not storage.object_exists(source_bucket, video_key):
+                database.add_job_log(job_id, "Master video missing — seeding from demo sample...")
+                storage.copy_object(source_bucket, SAMPLE_VIDEO, video_key)
+            if not storage.object_exists(source_bucket, audio_key):
+                database.add_job_log(job_id, "Master voiceover missing — seeding from demo sample...")
+                storage.copy_object(source_bucket, SAMPLE_AUDIO, audio_key)
+
             # 1b. Pull master assets from Amazon S3 into the local mirror so the
             # subsequent working forks include the source files.
             database.add_job_log(job_id, f"Fetching master assets from Amazon S3 bucket '{source_bucket}'...")
