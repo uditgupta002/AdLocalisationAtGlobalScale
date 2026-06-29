@@ -100,14 +100,18 @@ export default function Dashboard() {
   const toggleMarket = (m: string) =>
     setMarkets((prev) => (prev.includes(m) ? prev.filter((x) => x !== m) : [...prev, m]));
 
-  const submit = async () => {
-    if (!campaignId.trim() || !markets.length) return;
+  const launchJob = async (
+    cid: string,
+    mkts: string[],
+    vFile: File | null,
+    aFile: File | null
+  ) => {
+    if (!cid || !mkts.length) return;
     setSubmitting(true);
     setError(null);
-    const cid = campaignId.trim();
     try {
       // 1. Optionally upload master assets straight to S3 via presigned PUT.
-      if (videoFile || audioFile) {
+      if (vFile || aFile) {
         setPhase("Uploading master assets to S3…");
         const presRes = await fetch("/api/upload", {
           method: "POST",
@@ -117,10 +121,10 @@ export default function Dashboard() {
         const pres = await presRes.json();
         if (!presRes.ok) throw new Error(pres.error ?? "Upload presign failed");
         const puts: Promise<Response>[] = [];
-        if (videoFile)
-          puts.push(fetch(pres.video.url, { method: "PUT", headers: { "Content-Type": "video/mp4" }, body: videoFile }));
-        if (audioFile)
-          puts.push(fetch(pres.audio.url, { method: "PUT", headers: { "Content-Type": "audio/wav" }, body: audioFile }));
+        if (vFile)
+          puts.push(fetch(pres.video.url, { method: "PUT", headers: { "Content-Type": "video/mp4" }, body: vFile }));
+        if (aFile)
+          puts.push(fetch(pres.audio.url, { method: "PUT", headers: { "Content-Type": "audio/wav" }, body: aFile }));
         await Promise.all(puts);
       }
 
@@ -129,7 +133,7 @@ export default function Dashboard() {
       const res = await fetch("/api/jobs", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ campaignId: cid, markets }),
+        body: JSON.stringify({ campaignId: cid, markets: mkts }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "Failed to launch job");
@@ -150,6 +154,15 @@ export default function Dashboard() {
       setSubmitting(false);
       setPhase("");
     }
+  };
+
+  const submit = () => launchJob(campaignId.trim(), markets, videoFile, audioFile);
+
+  // One-click demo: uses the bundled sample creative + all markets so judges
+  // can see the full pipeline run without any setup.
+  const runDemo = () => {
+    const cid = `demo_${Date.now().toString(36)}`;
+    launchJob(cid, ALL_MARKETS, null, null);
   };
 
   const selected = detail?.job ?? jobs.find((j) => j.id === selectedId) ?? null;
@@ -204,9 +217,29 @@ export default function Dashboard() {
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-12">
         {/* Left column */}
         <div className="space-y-6 lg:col-span-5">
+          {/* One-click demo banner */}
+          <section className="rounded-2xl border border-[var(--accent)]/40 bg-gradient-to-br from-[var(--accent)]/15 to-[var(--accent-2)]/10 p-5">
+            <div className="flex items-center gap-2">
+              <span className="text-lg">⚡</span>
+              <h2 className="text-sm font-semibold">Judges — try it instantly</h2>
+            </div>
+            <p className="mb-4 mt-1 text-xs text-[var(--muted)]">
+              Runs the full pipeline on our sample ad across all 4 markets. No setup —
+              localized in seconds on Aurora DSQL + S3.
+            </p>
+            <button
+              onClick={runDemo}
+              disabled={submitting}
+              className="w-full rounded-lg bg-[var(--accent)] px-4 py-2.5 text-sm font-semibold text-black transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              {submitting ? phase || "Running…" : "▶  Run Instant Demo"}
+            </button>
+          </section>
+
           {/* Trigger panel */}
           <section className="rounded-2xl border border-[var(--border)] bg-[var(--surface)] p-5">
-            <h2 className="mb-4 text-sm font-semibold">Launch localization swarm</h2>
+            <h2 className="mb-1 text-sm font-semibold">Or launch your own campaign</h2>
+            <p className="mb-4 text-xs text-[var(--muted)]">Upload your own video/audio, or leave blank to use the sample.</p>
             <label className="mb-1.5 block text-xs text-[var(--muted)]">Campaign ID</label>
             <input
               value={campaignId}
