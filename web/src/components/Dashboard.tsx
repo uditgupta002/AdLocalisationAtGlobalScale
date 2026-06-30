@@ -66,15 +66,24 @@ export default function Dashboard() {
     }
   }, []);
 
-  const fetchDetail = useCallback(async (id: string) => {
-    try {
-      const res = await fetch(`/api/jobs/${id}`, { cache: "no-store" });
-      const data = await res.json();
-      if (res.ok) setDetail(data);
-    } catch {
-      /* ignore transient */
-    }
-  }, []);
+  const fetchDetail = useCallback(
+    async (
+      id: string
+    ): Promise<{ job: LocalizationJob; previews: Record<string, Preview> } | null> => {
+      try {
+        const res = await fetch(`/api/jobs/${id}`, { cache: "no-store" });
+        const data = await res.json();
+        if (res.ok) {
+          setDetail(data);
+          return data;
+        }
+      } catch {
+        /* ignore transient */
+      }
+      return null;
+    },
+    []
+  );
 
   useEffect(() => {
     fetchJobs();
@@ -88,9 +97,23 @@ export default function Dashboard() {
 
   useEffect(() => {
     if (!selectedId) return;
-    fetchDetail(selectedId);
-    const t = setInterval(() => fetchDetail(selectedId), 2000);
-    return () => clearInterval(t);
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    // Poll for live progress, but STOP once the job reaches a terminal state.
+    // Otherwise each poll mints a fresh presigned S3 URL, changing the <video>
+    // src and forcing the player to restart every couple of seconds.
+    const tick = async () => {
+      const data = await fetchDetail(selectedId);
+      if (cancelled) return;
+      const status = data?.job?.status;
+      const terminal = status === "completed" || status === "failed";
+      if (!terminal) timer = setTimeout(tick, 2000);
+    };
+    tick();
+    return () => {
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+    };
   }, [selectedId, fetchDetail]);
 
   useEffect(() => {
